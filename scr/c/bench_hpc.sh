@@ -1,29 +1,31 @@
 #!/bin/bash
 # Бенчмарки FFT на tornado: C + OpenMP + pthreads + MPI (C и Python)
-# Скрипт предполагает, что:
-#   1) ты уже внутри srun на узле tornado (НЕ на login1!)
+# Ожидается, что:
+#   1) ты уже на вычислительном узле (n01p0xx), а не login1
 #   2) загружены модули:
 #        module purge
 #        module load compiler/gcc/11
 #        module load mpi/openmpi/4.1.6/gcc/11
 #        module load python
+#   3) ты находишься в каталоге ~/supercomp/scr/c
 #
-#   3) находишься в каталоге ~/supercomp/scr/c
-#   4) mpi4py установлен в intel python3
+# Важно: Python/MPI ограничим и обернём в timeout, чтобы не вешать весь шаг.
 
-set -u  # не делаем set -e, чтобы при одном фейле не падало всё
+set -u  # не set -e, чтобы скрипт не падал из-за одного фейла
 
 N=${N:-1048576}
 REPEATS=3
 
 # Диапазоны
 THREADS="1 2 4 8 16 32 48"     # для pthreads и OpenMP
-MPI_PROCS="1 2 4 8 16 32"      # для C/mpi и Py/mpi (48 нельзя: 1048576 % 48 != 0)
+MPI_PROCS="1 2 4 8 16 32"      # для C/MPI
+MPI_PROCS_PY="1 2 4 8"         # для Python/MPI (чуть осторожнее)
 
-# Явные пути к mpirun
-OMPI_RUN=/opt/software/openmpi/4.1.6/gcc11/bin/mpirun      # для C/mpi
-IMPI_RUN=/opt/software/intel/intelpython3/bin/mpirun       # для Py/mpi
+# mpirun для C и для Python
+OMPI_RUN=/opt/software/openmpi/4.1.6/gcc11/bin/mpirun
+IMPI_RUN=/opt/software/intel/intelpython3/bin/mpirun
 PY=python3
+TIMEOUT=timeout                 # если timeout вдруг не найден -> закомментируй его в вызове ниже
 
 OUT="bench_results_$(date +%Y%m%d_%H%M%S).csv"
 
@@ -31,9 +33,16 @@ echo "Запускаю бенчмарки, результаты -> $OUT"
 
 echo "program,impl,N,workers,unit,run_idx,time_s" > "$OUT"
 
-# Функция измерения времени (секунды, float) через /usr/bin/time
+# ---------- Функция измерения времени ----------
 measure() {
-    /usr/bin/time -f "%e" "$@" 1>/dev/null 2>&1
+    # Используем /usr/bin/time и временный файл, чтобы получить число в секундах
+    local tmp
+    tmp=$(mktemp)
+    /usr/bin/time -f "%e" -o "$tmp" "$@" >/dev/null 2>&1
+    local t
+    t=$(cat "$tmp" 2>/dev/null || echo "nan")
+    rm -f "$tmp"
+    echo "$t"
 }
 
 ##### 1. C: последовательная версия #####
@@ -77,15 +86,18 @@ done
 
 ##### 5. Python: MPI (mpi4py + Intel MPI) #####
 echo "== Python MPI (mpi4py, Intel mpirun) =="
-# Проверка, что mpi4py реально импортируется
+
+# Проверяем один раз, что mpi4py импортируется
 $PY -c "from mpi4py import MPI; print('mpi4py OK')" || {
-    echo "ERROR: mpi4py не импортируется в $PY. Пропускаю Python/MPI." >&2
+    echo "WARNING: mpi4py не импортируется в $PY. Блок Python/MPI пропущен." >&2
+    echo "Готово (без Python/MPI). CSV: $OUT"
     exit 0
 }
 
-for P in $MPI_PROCS; do
+for P in $MPI_PROCS_PY; do
     for r in $(seq 1 $REPEATS); do
-        t=$(measure "$IMPI_RUN" -n "$P" "$PY" fft_mpi.py "$N")
+        # Timeout, чтобы не повиснуть навсегда (120 секунд на один запуск)
+        t=$(measure "$TIMEOUT" 120s "$IMPI_RUN" -n "$P" "$PY" fft_mpi.py "$N")
         printf "fft_mpi,Py/mpi,%d,%d,processes,%d,%.6f\n" "$N" "$P" "$r" "$t" >> "$OUT"
         echo "Py/MPI       N=$N P=$P run=$r t=${t}s"
     done
