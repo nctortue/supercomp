@@ -87,12 +87,6 @@ done
 ##### 5. Python: MPI (mpi4py + Intel MPI) #####
 echo "== Python MPI (mpi4py, Intel mpirun) =="
 
-# Проверяем один раз, что mpi4py импортируется
-$PY -c "from mpi4py import MPI; print('mpi4py OK')" || {
-    echo "WARNING: mpi4py не импортируется в $PY. Блок Python/MPI пропущен." >&2
-    echo "Готово (без Python/MPI). CSV: $OUT"
-    exit 0
-}
 
 for P in $MPI_PROCS_PY; do
     for r in $(seq 1 $REPEATS); do
