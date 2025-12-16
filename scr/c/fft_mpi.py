@@ -10,7 +10,7 @@ N = int(sys.argv[1]) if len(sys.argv) > 1 else (1 << 20)
 assert N % P == 0
 nloc = N // P
 
-# локальный блок, комплексный тон
+
 idx0 = rank * nloc + np.arange(nloc)
 X = np.exp(2j * np.pi * (idx0 % 16) / N).astype(np.complex128)
 
@@ -29,7 +29,6 @@ for s in range(1, log2n + 1):
             X[k:k + mh] = u + v
             X[k + mh:k + m] = u - v
     else:
-        # простой gather/scatter как в C-варианте
         X_full = None
         if rank == 0:
             X_full = np.empty(N, dtype=np.complex128)
@@ -47,7 +46,6 @@ for s in range(1, log2n + 1):
 
         comm.Scatter(X_full, X, root=0)
 
-# опциональный контроль
 norm2_local = np.vdot(X, X).real
 norm2 = comm.reduce(norm2_local, op=MPI.SUM, root=0)
 
